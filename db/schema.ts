@@ -1,17 +1,23 @@
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-export const demoAccounts = sqliteTable("demo_accounts", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  displayName: text("display_name").notNull(),
-  company: text("company").notNull(),
-  role: text("role").notNull(),
-  hedgeStory: text("hedge_story").notNull(),
-  availableBalance: integer("available_balance").notNull(),
-  fundingTotal: integer("funding_total").notNull().default(0),
-  withdrawnTotal: integer("withdrawn_total").notNull().default(0),
-  createdAt: text("created_at").notNull().default("2026-07-22T00:00:00.000Z"),
-});
+export const demoAccounts = sqliteTable(
+  "demo_accounts",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull().unique(),
+    displayName: text("display_name").notNull(),
+    company: text("company").notNull(),
+    role: text("role").notNull(),
+    hedgeStory: text("hedge_story").notNull(),
+    availableBalance: integer("available_balance").notNull(),
+    fundingTotal: integer("funding_total").notNull().default(0),
+    withdrawnTotal: integer("withdrawn_total").notNull().default(0),
+    ownerKey: text("owner_key"),
+    claimedAt: text("claimed_at"),
+    createdAt: text("created_at").notNull().default("2026-07-22T00:00:00.000Z"),
+  },
+  (table) => [uniqueIndex("demo_accounts_owner_key_idx").on(table.ownerKey)],
+);
 
 export const demoOrders = sqliteTable(
   "demo_orders",

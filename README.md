@@ -52,19 +52,28 @@ A shared settlement layer can make participant-only rules visible and enforceabl
 
 In a regulated production model, a licensed operator would accept NPR through domestic banking rails, mint the same amount of **1:1 reserve-backed tNPR**, lock tNPR as margin, settle gains and losses on-chain, and redeem tNPR back to NPR. Exposure would be cash-settled domestically; no participant money would be used to buy the referenced foreign asset. Reserve backing and redemption are only a proposed operating model—the prototype's tNPR is unbacked play money.
 
+### What Solana does in this prototype
+
+Today, Solana is a **proof layer**, not the trading engine. After two participants match in the paper ledger, either participant can connect Phantom or Solflare and publish the trade facts as a signed JSON memo on Solana Devnet. NPRX verifies the confirmed transaction, signing wallet, Memo Program and trade ID before attaching the signature to both paper positions. The signature opens directly in Solana Explorer.
+
+The live prices, participant identity, order book, balances, collateral simulation, matching and P&L remain off-chain in this version. No tNPR token has been minted, no smart contract holds margin and no program settles a position. A production design would move approved price inputs, reserve-backed tNPR, collateral escrow, equal-and-opposite position creation and settlement rules into regulator-approved Solana programs.
+
 ## The working prototype
 
-- Create a public sandbox account for a Nepali business use case.
+- Sign in with platform identity and restore the same participant across devices without an NPRX password.
+- Recover a pre-sign-in paper account through a clearly labelled one-time legacy migration.
+- Create a public sandbox participant for a Nepali business use case.
 - Claim test funds subject to a strict **1,000,000 tNPR lifetime cap per account**.
 - Follow near-live WTI, Brent and USD/NPR reference charts.
 - See an official NRB USD/NPR daily reference separately.
 - Post long or short hedge requests to a shared participant order book.
 - Match fully collateralised paper positions with zero initial P&L.
 - Explore 100 seeded market transactions and a deeper portfolio view.
+- Follow a guided onboarding checklist and inspect the application audit log.
 - Simulate tNPR redemption to illustrate the intended real-world withdrawal flow.
-- Optionally sign a paper-trade receipt through Solana's deployed Memo Program using `@coral-xyz/anchor`.
+- Optionally sign a paper-trade receipt through Solana's deployed Memo Program using `@coral-xyz/anchor`, then inspect it in the dedicated Solana audit workspace.
 
-Paper accounts, matching, funding and balances are stored in a shared Cloudflare D1 database. Only optional audit receipts are currently written to Solana Devnet. No real asset or claim is represented.
+Paper accounts, matching, funding and balances are stored in a shared Cloudflare D1 database. The hosted sign-in supplies a verified identity; NPRX stores a pseudonymous ownership key rather than the user's email or a password. Only optional audit receipts are currently written to Solana Devnet. No real asset or claim is represented.
 
 ## Run locally
 

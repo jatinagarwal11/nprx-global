@@ -22,6 +22,13 @@
       "when": 1784730931454,
       "tag": "0002_panoramic_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784740466602,
+      "tag": "0003_handy_colleen_wing",
+      "breakpoints": true
     }
   ]
 }

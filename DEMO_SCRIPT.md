@@ -6,7 +6,7 @@ Target length: **2 minutes 50 seconds**.
 
 "Nepali businesses budget in NPR, but import invoices, export receipts and fuel costs move with USD and global oil. NRB permits bank-mediated FX forwards, yet its own study describes a bank-dominated market with limited firm participation, legal and administrative hurdles, and no exit policy. NPRX asks whether opposite business exposures could be matched and settled domestically."
 
-Show the join screen and create a new participant. State clearly that this is a paper simulation.
+Show **Sign in with ChatGPT**, then create a participant. Explain that the participant can now be restored across browsers without an NPRX password; older device-only accounts have a one-time recovery flow. State clearly that this is a paper simulation.
 
 ## 0:30-0:55 - Capped paper funding
 
@@ -40,9 +40,9 @@ Open Portfolio, then Transactions.
 
 ## 2:20-2:50 - Solana and long-term model
 
-Open Why NPRX and optionally publish a Devnet receipt from one of your trades.
+Open **Solana**, connect a Devnet wallet and optionally publish one matched trade receipt. Show the on-chain/off-chain boundary and the Solana Explorer link.
 
-"Today only optional audit receipts are on Solana. In a regulated production model, domestic NPR would be held by a licensed operator, 1:1 reserve-backed tNPR would be locked as on-chain margin, matches would settle deterministically, and tNPR could be redeemed back to NPR. The referenced foreign asset is never purchased, so the product hypothesis keeps settlement domestic."
+"Today Solana is the proof layer: a participant signs the matched trade facts, NPRX verifies the confirmed Memo transaction, and anyone can inspect the signature. Prices, balances, matching and P&L remain off-chain. In a regulated production model, domestic NPR would be held by a licensed operator, 1:1 reserve-backed tNPR would be locked as on-chain margin, matches would settle deterministically, and tNPR could be redeemed back to NPR."
 
 End on the no-real-money disclaimer and live URL.
 
@@ -52,4 +52,5 @@ End on the no-real-money disclaimer and live URL.
 - State that tNPR is unbacked play money and no real derivative exists.
 - Do not claim that counterparty risk is eliminated; say collateral can reduce it.
 - Use a Solana Devnet wallet only if publishing a receipt.
+- Show the Guide or application audit log if time permits.
 - Upload to Loom or YouTube and add the link to `README.md`.

@@ -1,4 +1,7 @@
 import { env } from "cloudflare:workers";
+import { getChatGPTUser } from "../../chatgpt-auth";
+
+export const dynamic = "force-dynamic";
 
 type DemoStatement = {
   bind: (...values: unknown[]) => DemoStatement;
@@ -22,6 +25,8 @@ type DemoAccount = {
   available_balance: number;
   funding_total: number;
   withdrawn_total: number;
+  owner_key?: string | null;
+  claimed_at?: string | null;
   created_at: string;
 };
 
@@ -39,12 +44,27 @@ type DemoOrder = {
 type DemoTrade = {
   id: string;
   match_id: string;
+  market_id: string;
   long_user_id: string;
   short_user_id: string;
+  notional: number;
+  price: number;
 };
 
 const MAX_LIFETIME_FUNDING = 1_000_000;
 const validMarkets = new Set(["wti", "brent", "usdnpr"]);
+const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const SOLANA_DEVNET_RPC = "https://api.devnet.solana.com";
+
+type ViewerIdentity = { ownerKey: string; displayName: string };
+
+class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const seedAccounts = [
   ["person1", "Asha Shrestha", "Himal Agro Imports", "Procurement Director", "Imports goods priced in USD and pays fuel-linked freight. Long oil and USD/NPR hedges can stabilise landed cost.", 300000],
@@ -67,6 +87,43 @@ function getDemoDb() {
   return db;
 }
 
+async function getViewerIdentity(): Promise<ViewerIdentity | null> {
+  const user = await getChatGPTUser();
+  if (!user) return null;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nprx-owner-v1:${user.email.trim().toLowerCase()}`),
+  );
+  const ownerKey = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return { ownerKey: `chatgpt:${ownerKey}`, displayName: user.fullName ?? user.displayName };
+}
+
+async function requireOwnedAccount(db: DemoDb, identity: ViewerIdentity | null, userId: string) {
+  if (!identity) throw new ApiError("Sign in with ChatGPT to continue", 401);
+  const account = await db.prepare("SELECT * FROM demo_accounts WHERE id = ? AND owner_key = ?")
+    .bind(userId, identity.ownerKey).first<DemoAccount>();
+  if (!account) throw new ApiError("This participant is not linked to your signed-in identity", 403);
+  return account;
+}
+
+async function verifySolanaReceipt(signature: string, walletAddress: string, tradeId: string) {
+  const rpcResponse = await fetch(SOLANA_DEVNET_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "nprx-receipt-check",
+      method: "getTransaction",
+      params: [signature, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }],
+    }),
+  });
+  if (!rpcResponse.ok) return false;
+  const rpc = await rpcResponse.json() as { result?: { meta?: { err?: unknown }; transaction?: unknown } | null };
+  if (!rpc.result || rpc.result.meta?.err) return false;
+  const transactionText = JSON.stringify(rpc.result);
+  return transactionText.includes(MEMO_PROGRAM_ID) && transactionText.includes(walletAddress) && transactionText.includes(tradeId);
+}
+
 async function batchInChunks(db: DemoDb, statements: DemoStatement[], size = 40) {
   for (let index = 0; index < statements.length; index += size) {
     await db.batch(statements.slice(index, index + size));
@@ -85,6 +142,8 @@ async function ensureDemoState(db: DemoDb) {
       available_balance INTEGER NOT NULL,
       funding_total INTEGER NOT NULL DEFAULT 0,
       withdrawn_total INTEGER NOT NULL DEFAULT 0,
+      owner_key TEXT,
+      claimed_at TEXT,
       created_at TEXT NOT NULL DEFAULT '2026-07-22T00:00:00.000Z'
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS demo_orders (
@@ -125,8 +184,11 @@ async function ensureDemoState(db: DemoDb) {
   const accountUpgrades: DemoStatement[] = [];
   if (!existingColumns.has("funding_total")) accountUpgrades.push(db.prepare("ALTER TABLE demo_accounts ADD COLUMN funding_total INTEGER NOT NULL DEFAULT 0"));
   if (!existingColumns.has("withdrawn_total")) accountUpgrades.push(db.prepare("ALTER TABLE demo_accounts ADD COLUMN withdrawn_total INTEGER NOT NULL DEFAULT 0"));
+  if (!existingColumns.has("owner_key")) accountUpgrades.push(db.prepare("ALTER TABLE demo_accounts ADD COLUMN owner_key TEXT"));
+  if (!existingColumns.has("claimed_at")) accountUpgrades.push(db.prepare("ALTER TABLE demo_accounts ADD COLUMN claimed_at TEXT"));
   if (!existingColumns.has("created_at")) accountUpgrades.push(db.prepare("ALTER TABLE demo_accounts ADD COLUMN created_at TEXT NOT NULL DEFAULT '2026-07-22T00:00:00.000Z'"));
   if (accountUpgrades.length) await db.batch(accountUpgrades);
+  await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS demo_accounts_owner_key_idx ON demo_accounts(owner_key) WHERE owner_key IS NOT NULL").run();
 
   const accountStatements = seedAccounts.map(([id, name, company, role, story, funded], index) =>
     db.prepare(`INSERT OR IGNORE INTO demo_accounts
@@ -221,20 +283,34 @@ async function ensureDemoState(db: DemoDb) {
   ]);
 }
 
-async function readDemoState(db: DemoDb) {
-  const [accounts, orders, positions, trades, deposits, withdrawals, audit] = await Promise.all([
-    db.prepare("SELECT * FROM demo_accounts ORDER BY created_at ASC").all(),
+async function readDemoState(db: DemoDb, identity: ViewerIdentity | null = null) {
+  const accountsQuery = identity
+    ? db.prepare(`SELECT id, email, CASE WHEN owner_key = ? THEN display_name ELSE 'Market participant' END AS display_name,
+        company, role, hedge_story, available_balance, funding_total, withdrawn_total, created_at
+        FROM demo_accounts ORDER BY created_at ASC`).bind(identity.ownerKey)
+    : db.prepare(`SELECT id, email, 'Market participant' AS display_name, company, role, hedge_story,
+        available_balance, funding_total, withdrawn_total, created_at FROM demo_accounts ORDER BY created_at ASC`);
+  const [accounts, orders, positions, trades, deposits, withdrawals, audit, participant] = await Promise.all([
+    accountsQuery.all(),
     db.prepare("SELECT * FROM demo_orders WHERE status = 'open' ORDER BY created_at DESC").all(),
     db.prepare("SELECT * FROM demo_positions WHERE status = 'open' ORDER BY created_at DESC").all(),
     db.prepare("SELECT * FROM demo_trades ORDER BY created_at DESC LIMIT 100").all(),
     db.prepare("SELECT * FROM demo_deposits ORDER BY created_at DESC LIMIT 100").all(),
     db.prepare("SELECT * FROM demo_withdrawals ORDER BY created_at DESC LIMIT 100").all(),
     db.prepare("SELECT * FROM demo_audit_events ORDER BY created_at DESC LIMIT 60").all(),
+    identity
+      ? db.prepare("SELECT id FROM demo_accounts WHERE owner_key = ?").bind(identity.ownerKey).first<{ id: string }>()
+      : Promise.resolve(null),
   ]);
   return {
     accounts: accounts.results ?? [], orders: orders.results ?? [], positions: positions.results ?? [],
     trades: trades.results ?? [], deposits: deposits.results ?? [], withdrawals: withdrawals.results ?? [], audit: audit.results ?? [],
     limits: { lifetimeFunding: MAX_LIFETIME_FUNDING },
+    viewer: {
+      authenticated: Boolean(identity),
+      displayName: identity?.displayName ?? null,
+      participantId: participant?.id ?? null,
+    },
   };
 }
 
@@ -242,7 +318,8 @@ export async function GET() {
   try {
     const db = getDemoDb();
     await ensureDemoState(db);
-    return Response.json(await readDemoState(db), { headers: { "Cache-Control": "no-store" } });
+    const identity = await getViewerIdentity();
+    return Response.json(await readDemoState(db, identity), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Paper market unavailable" }, { status: 503 });
   }
@@ -255,6 +332,8 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as Record<string, unknown>;
     const action = String(payload.action ?? "");
     const now = new Date().toISOString();
+    const identity = await getViewerIdentity();
+    if (!identity) return Response.json({ error: "Sign in with ChatGPT to create or use a participant", signInUrl: "/signin-with-chatgpt?return_to=%2F" }, { status: 401 });
 
     if (action === "create_account") {
       const displayName = String(payload.displayName ?? "").trim().slice(0, 60);
@@ -262,21 +341,42 @@ export async function POST(request: Request) {
       const role = String(payload.role ?? "Business participant").trim().slice(0, 60);
       const hedgeStory = String(payload.hedgeStory ?? "Exploring a business hedge against global price volatility.").trim().slice(0, 300);
       if (displayName.length < 2 || company.length < 2) return Response.json({ error: "Enter your name and business name" }, { status: 400 });
+      const existingAccount = await db.prepare("SELECT id FROM demo_accounts WHERE owner_key = ?").bind(identity.ownerKey).first<{ id: string }>();
+      if (existingAccount) return Response.json({ error: "Your signed-in identity already has a participant account" }, { status: 409 });
       const userId = `participant-${crypto.randomUUID()}`;
       await db.batch([
         db.prepare(`INSERT INTO demo_accounts
-          (id, email, display_name, company, role, hedge_story, available_balance, funding_total, withdrawn_total, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`)
-          .bind(userId, `${userId}@sandbox.nprx`, displayName, company, role, hedgeStory, now),
+          (id, email, display_name, company, role, hedge_story, available_balance, funding_total, withdrawn_total, owner_key, claimed_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?)`)
+          .bind(userId, `${userId}@sandbox.nprx`, displayName, company, role, hedgeStory, identity.ownerKey, now, now),
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'account', ?, 'New sandbox participant joined', ?, ?)")
           .bind(crypto.randomUUID(), userId, `${company} joined the live paper market`, now),
       ]);
-      return Response.json({ ok: true, userId, state: await readDemoState(db) });
+      return Response.json({ ok: true, userId, state: await readDemoState(db, identity) });
+    }
+
+    if (action === "claim_legacy") {
+      const displayName = String(payload.displayName ?? "").trim().slice(0, 60);
+      const company = String(payload.company ?? "").trim().slice(0, 80);
+      if (displayName.length < 2 || company.length < 2) return Response.json({ error: "Enter the exact name and business used for the old account" }, { status: 400 });
+      const existingAccount = await db.prepare("SELECT id FROM demo_accounts WHERE owner_key = ?").bind(identity.ownerKey).first<{ id: string }>();
+      if (existingAccount) return Response.json({ error: "Your signed-in identity is already linked to a participant" }, { status: 409 });
+      const matches = await db.prepare(`SELECT id FROM demo_accounts
+        WHERE owner_key IS NULL AND id LIKE 'participant-%' AND lower(display_name) = lower(?) AND lower(company) = lower(?)
+        LIMIT 2`).bind(displayName, company).all<{ id: string }>();
+      if ((matches.results ?? []).length === 0) return Response.json({ error: "No unclaimed legacy account matched those exact details" }, { status: 404 });
+      if ((matches.results ?? []).length > 1) return Response.json({ error: "More than one account matched; contact the sandbox operator" }, { status: 409 });
+      const userId = matches.results![0].id;
+      const claim = await db.prepare("UPDATE demo_accounts SET owner_key = ?, claimed_at = ? WHERE id = ? AND owner_key IS NULL")
+        .bind(identity.ownerKey, now, userId).run();
+      if ((claim.meta?.changes ?? claim.changes ?? 0) !== 1) return Response.json({ error: "That account was claimed by another session" }, { status: 409 });
+      await db.prepare("INSERT INTO demo_audit_events VALUES (?, 'account', ?, 'Legacy participant access secured', ?, ?)")
+        .bind(crypto.randomUUID(), userId, "Old device-only participant linked to a signed-in identity", now).run();
+      return Response.json({ ok: true, userId, state: await readDemoState(db, identity) });
     }
 
     const userId = String(payload.userId ?? "");
-    const account = await db.prepare("SELECT * FROM demo_accounts WHERE id = ?").bind(userId).first<DemoAccount>();
-    if (!account) return Response.json({ error: "Create or restore a sandbox participant first" }, { status: 401 });
+    const account = await requireOwnedAccount(db, identity, userId);
 
     if (action === "claim_funds" || action === "deposit") {
       const amount = Math.round(Number(payload.amount));
@@ -293,7 +393,7 @@ export async function POST(request: Request) {
         db.prepare("INSERT INTO demo_deposits VALUES (?, ?, ?, ?, 'Paper funding faucet', ?)").bind(crypto.randomUUID(), userId, amount, reference, now),
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'funding', ?, 'Paper funds claimed', ?, ?)").bind(crypto.randomUUID(), userId, `${amount.toLocaleString()} tNPR credited; no real money moved`, now),
       ]);
-      return Response.json({ ok: true, reference, state: await readDemoState(db) });
+      return Response.json({ ok: true, reference, state: await readDemoState(db, identity) });
     }
 
     if (action === "withdraw") {
@@ -310,7 +410,7 @@ export async function POST(request: Request) {
         db.prepare("INSERT INTO demo_withdrawals VALUES (?, ?, ?, ?, 'simulated', ?)").bind(crypto.randomUUID(), userId, amount, reference, now),
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'withdrawal', ?, 'tNPR redemption simulated', ?, ?)").bind(crypto.randomUUID(), userId, `${amount.toLocaleString()} tNPR removed; no real NPR was paid`, now),
       ]);
-      return Response.json({ ok: true, reference, state: await readDemoState(db) });
+      return Response.json({ ok: true, reference, state: await readDemoState(db, identity) });
     }
 
     if (action === "place_order") {
@@ -332,7 +432,7 @@ export async function POST(request: Request) {
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'order', ?, 'Participant hedge request posted', ?, ?)")
           .bind(crypto.randomUUID(), userId, `${side.toUpperCase()} ${marketId.toUpperCase()} - ${notional.toLocaleString()} tNPR - awaiting another participant`, now),
       ]);
-      return Response.json({ ok: true, orderId, state: await readDemoState(db) });
+      return Response.json({ ok: true, orderId, state: await readDemoState(db, identity) });
     }
 
     if (action === "take_order") {
@@ -374,7 +474,7 @@ export async function POST(request: Request) {
         await db.prepare("UPDATE demo_orders SET status = 'open' WHERE id = ? AND status = 'matching'").bind(orderId).run();
         throw cause;
       }
-      return Response.json({ ok: true, matchId, tradeId, state: await readDemoState(db) });
+      return Response.json({ ok: true, matchId, tradeId, state: await readDemoState(db, identity) });
     }
 
     if (action === "cancel_order") {
@@ -386,25 +486,31 @@ export async function POST(request: Request) {
         db.prepare("UPDATE demo_accounts SET available_balance = available_balance + ? WHERE id = ?").bind(order.notional, userId),
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'order', ?, 'Hedge request cancelled', ?, ?)").bind(crypto.randomUUID(), userId, `${order.notional.toLocaleString()} tNPR margin released`, now),
       ]);
-      return Response.json({ ok: true, state: await readDemoState(db) });
+      return Response.json({ ok: true, state: await readDemoState(db, identity) });
     }
 
     if (action === "attach_signature") {
       const tradeId = String(payload.tradeId ?? "");
       const signature = String(payload.signature ?? "");
+      const walletAddress = String(payload.walletAddress ?? "");
       if (!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(signature)) return Response.json({ error: "Invalid Solana signature" }, { status: 400 });
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) return Response.json({ error: "Invalid Solana wallet address" }, { status: 400 });
       const trade = await db.prepare("SELECT * FROM demo_trades WHERE id = ?").bind(tradeId).first<DemoTrade>();
       if (!trade || (trade.long_user_id !== userId && trade.short_user_id !== userId)) return Response.json({ error: "Only a trade participant can attach a receipt" }, { status: 403 });
+      if (!(await verifySolanaReceipt(signature, walletAddress, tradeId))) {
+        return Response.json({ error: "The Devnet transaction could not be verified as this NPRX receipt" }, { status: 400 });
+      }
       await db.batch([
         db.prepare("UPDATE demo_trades SET chain_signature = ? WHERE id = ?").bind(signature, tradeId),
         db.prepare("UPDATE demo_positions SET signature = ? WHERE match_id = ?").bind(signature, trade.match_id),
         db.prepare("INSERT INTO demo_audit_events VALUES (?, 'chain', ?, 'Solana Devnet receipt confirmed', ?, ?)").bind(crypto.randomUUID(), userId, `${tradeId} - ${signature.slice(0, 12)}...`, now),
       ]);
-      return Response.json({ ok: true, state: await readDemoState(db) });
+      return Response.json({ ok: true, state: await readDemoState(db, identity) });
     }
 
     return Response.json({ error: "Unknown paper-market action" }, { status: 400 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Paper-market action failed" }, { status: 500 });
+    const status = error instanceof ApiError ? error.status : 500;
+    return Response.json({ error: error instanceof Error ? error.message : "Paper-market action failed" }, { status });
   }
 }
