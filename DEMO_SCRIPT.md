@@ -1,59 +1,55 @@
-# NPRX Global — 3-minute demo script
+# NPRX Global - 3-minute demo script
 
-Target length: **2 minutes 45 seconds**.
+Target length: **2 minutes 50 seconds**.
 
-## 0:00–0:20 — Problem
+## 0:00-0:30 - Problem and regulatory context
 
-“Nepali businesses budget locally, but fuel, freight and dollar invoices move with global markets. NPRX Global is a Solana-enabled paper market where businesses can practise hedging those costs without using real money.”
+"Nepali businesses budget in NPR, but import invoices, export receipts and fuel costs move with USD and global oil. NRB permits bank-mediated FX forwards, yet its own study describes a bank-dominated market with limited firm participation, legal and administrative hurdles, and no exit policy. NPRX asks whether opposite business exposures could be matched and settled domestically."
 
-Show the login screen and its four business personas.
+Show the join screen and create a new participant. State clearly that this is a paper simulation.
 
-## 0:20–0:45 — Funding and live markets
+## 0:30-0:55 - Capped paper funding
 
-Log in as **Asha / Himal Agro Imports**. Briefly show the clearly labelled connectIPS Sandbox deposit and return to Trade.
+Claim 250,000 tNPR from the paper faucet.
 
-“The account receives test-only tNPR. WTI, Brent and USD/NPR update from external reference feeds, while the official NRB daily FX reference is shown separately.”
+"Every participant has a strict lifetime allowance of one million test tNPR. No NPR enters the app and tNPR has no monetary value."
 
-Hover over the WTI line chart and switch once to USD/NPR.
+Show the funding meter and return to Trade.
 
-## 0:45–1:20 — Participant matching
+## 0:55-1:25 - Live markets and order creation
 
-Open **Orders**.
+Switch between WTI and USD/NPR, then hover over the line chart.
 
-“Asha has posted a 10,000 tNPR WTI long request because rising oil can increase her landed costs. It is only a request—there is no position or platform market maker yet.”
+"NPRX follows near-live reference data and shows the NRB daily USD/NPR rate separately. An importer expecting a USD invoice can post a long USD/NPR hedge; a fuel-intensive company can post a long oil hedge."
 
-Switch to **Bikash / Surya Solar Nepal**, open Orders and click **Take short**.
+Post a 50,000 tNPR long request.
 
-“The match creates equal and opposite paper positions at the same price, so both sides start with zero unrealised P&L.”
+## 1:25-1:55 - Participant matching
 
-## 1:20–1:45 — Portfolio and history
+Open Orders and take one existing participant's opposite request.
 
-Open **Portfolio**, then **Transactions**.
+"The platform cannot trade. A match creates one long and one short at the same price, both fully paper-collateralised and both starting at zero unrealised P&L."
 
-“The portfolio marks positions against the current reference price. The shared ledger contains earlier WTI, Brent and USD/NPR transactions across four Nepali business scenarios.”
+Mention the limitation: there is no unilateral exit; closing would require counterparty consent.
 
-Point to long participant, short participant, notional, price and status.
+## 1:55-2:20 - Portfolio and market activity
 
-## 1:45–2:20 — Solana proof
+Open Portfolio, then Transactions.
 
-Open **Solana & Proof** and connect a Devnet wallet. Return to Transactions and publish a receipt for one of Bikash’s trades.
+"The portfolio shows equity, available and locked margin, mark-to-market P&L, exposure by index and the bilateral counterparty. The shared tape contains 100 simulated transactions across oil and USD/NPR."
 
-“NPRX uses an AnchorProvider to submit a structured receipt through Solana’s deployed Memo Program. Once confirmed, the shared record links directly to Solana Explorer.”
+## 2:20-2:50 - Solana and long-term model
 
-Open the Explorer link if the transaction is confirmed.
+Open Why NPRX and optionally publish a Devnet receipt from one of your trades.
 
-## 2:20–2:45 — Impact and close
+"Today only optional audit receipts are on Solana. In a regulated production model, domestic NPR would be held by a licensed operator, 1:1 reserve-backed tNPR would be locked as on-chain margin, matches would settle deterministically, and tNPR could be redeemed back to NPR. The referenced foreign asset is never purchased, so the product hypothesis keeps settlement domestic."
 
-Return to **Solana & Proof**.
-
-“All directional exposure comes from participants: total longs equal total shorts and platform exposure is zero. Today this is a paper-trading prototype. The long-term opportunity is a transparent, regulator-ready risk-management venue for businesses underserved by global derivatives infrastructure.”
-
-End on the NPRX logo and live URL.
+End on the no-real-money disclaimer and live URL.
 
 ## Recording checklist
 
 - Keep the final video under 3:00.
-- Use a Solana Devnet wallet with a small Devnet SOL balance.
-- Hide unrelated browser tabs and wallet balances.
-- State clearly that tNPR, deposits and trades are simulations.
+- State that tNPR is unbacked play money and no real derivative exists.
+- Do not claim that counterparty risk is eliminated; say collateral can reduce it.
+- Use a Solana Devnet wallet only if publishing a receipt.
 - Upload to Loom or YouTube and add the link to `README.md`.

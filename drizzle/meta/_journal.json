@@ -15,6 +15,13 @@
       "when": 1784726110071,
       "tag": "0001_powerful_iron_fist",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784730931454,
+      "tag": "0002_panoramic_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

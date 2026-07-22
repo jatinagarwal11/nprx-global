@@ -8,6 +8,9 @@ export const demoAccounts = sqliteTable("demo_accounts", {
   role: text("role").notNull(),
   hedgeStory: text("hedge_story").notNull(),
   availableBalance: integer("available_balance").notNull(),
+  fundingTotal: integer("funding_total").notNull().default(0),
+  withdrawnTotal: integer("withdrawn_total").notNull().default(0),
+  createdAt: text("created_at").notNull().default("2026-07-22T00:00:00.000Z"),
 });
 
 export const demoOrders = sqliteTable(
@@ -67,6 +70,19 @@ export const demoDeposits = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [index("demo_deposits_user_idx").on(table.userId)],
+);
+
+export const demoWithdrawals = sqliteTable(
+  "demo_withdrawals",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    amount: integer("amount").notNull(),
+    reference: text("reference").notNull().unique(),
+    status: text("status").notNull().default("simulated"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("demo_withdrawals_user_idx").on(table.userId)],
 );
 
 export const demoAuditEvents = sqliteTable(

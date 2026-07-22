@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
-const title = "NPRX Global — Solana paper trading for business hedges";
+const title = "NPRX Global — Nepal's business hedge simulation";
 const description =
-  "A Solana Devnet paper market where Nepali businesses track oil and USD/NPR, match test hedges, and publish verifiable trade receipts.";
+  "Join a live Solana-enabled paper market where Nepali businesses simulate domestic USD/NPR and oil hedges without using real money.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const incomingHeaders = await headers();
@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "NPRX Global — Solana paper trading for Nepali businesses" }],
+      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "NPRX Global — paper hedging for Nepali businesses" }],
     },
     twitter: {
       card: "summary_large_image",
