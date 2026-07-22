@@ -81,3 +81,25 @@ export const demoAuditEvents = sqliteTable(
   },
   (table) => [index("demo_audit_created_idx").on(table.createdAt)],
 );
+
+export const demoTrades = sqliteTable(
+  "demo_trades",
+  {
+    id: text("id").primaryKey(),
+    matchId: text("match_id").notNull().unique(),
+    marketId: text("market_id").notNull(),
+    longUserId: text("long_user_id").notNull(),
+    shortUserId: text("short_user_id").notNull(),
+    notional: integer("notional").notNull(),
+    price: real("price").notNull(),
+    status: text("status", { enum: ["matched", "settled"] })
+      .notNull()
+      .default("matched"),
+    chainSignature: text("chain_signature"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("demo_trades_market_idx").on(table.marketId),
+    index("demo_trades_created_idx").on(table.createdAt),
+  ],
+);
