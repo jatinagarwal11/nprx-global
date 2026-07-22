@@ -2,70 +2,142 @@
 
 import {
   Activity,
-  ArrowUpRight,
+  ArrowDownToLine,
+  ArrowRight,
   BarChart3,
+  BriefcaseBusiness,
+  Building2,
   Check,
   CheckCircle2,
-  ChevronRight,
+  ChevronDown,
+  CircleAlert,
   CircleDollarSign,
   Clock3,
   Database,
-  Droplets,
   ExternalLink,
-  Eye,
-  Gauge,
+  Fuel,
+  Globe2,
   Landmark,
   Link2,
   LockKeyhole,
-  PlayCircle,
-  RotateCcw,
+  LogIn,
+  LogOut,
+  Plus,
+  Radio,
+  RefreshCw,
   Scale,
   ShieldCheck,
   TrendingDown,
   TrendingUp,
-  TriangleAlert,
+  Users,
   Wallet,
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-const REFERENCE_PRICE = 1_000;
-const MARK_PRICE = 1_003.2;
-const LOWER_BAND = 995;
-const UPPER_BAND = 1_005;
 const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+const DEMO_PASSWORD = "hedge123";
 
-type View = "trade" | "oversight" | "architecture";
+type View = "markets" | "orders" | "portfolio" | "oversight";
 type Side = "long" | "short";
-type PositionStatus = "open" | "settled";
+type MarketId = "wti" | "brent" | "usdnpr";
 
-type Position = {
-  id: string;
-  side: Side;
-  notional: number;
-  entry: number;
-  locked: number;
-  status: PositionStatus;
-  settlementPrice?: number;
-  realisedPnl?: number;
-  signature?: string;
+type MarketPoint = { value: number; time: number };
+type Market = {
+  id: MarketId;
+  symbol: string;
+  name: string;
+  shortName: string;
+  unit: string;
+  hedgeUse: string;
+  price: number;
+  previousClose: number;
+  change: number;
+  changePct: number;
+  updatedAt: string;
+  marketState: string;
+  points: MarketPoint[];
+  provider: string;
+  isFallback: boolean;
 };
 
-type AuditEvent = {
+type NrbReference = {
+  date?: string;
+  buy: number;
+  sell: number;
+  mid: number;
+  provider: string;
+};
+
+type DemoAccount = {
   id: string;
-  time: string;
-  kind: "compliance" | "oracle" | "order" | "settlement" | "faucet" | "chain";
+  email: string;
+  display_name: string;
+  company: string;
+  role: string;
+  hedge_story: string;
+  available_balance: number;
+};
+
+type DemoOrder = {
+  id: string;
+  user_id: string;
+  market_id: MarketId;
+  side: Side;
+  notional: number;
+  posted_price: number;
+  status: string;
+  counterparty_id?: string | null;
+  match_price?: number | null;
+  created_at: string;
+  matched_at?: string | null;
+};
+
+type DemoPosition = {
+  id: string;
+  match_id: string;
+  user_id: string;
+  counterparty_id: string;
+  market_id: MarketId;
+  side: Side;
+  notional: number;
+  entry_price: number;
+  status: string;
+  created_at: string;
+  signature?: string | null;
+};
+
+type DemoDeposit = {
+  id: string;
+  user_id: string;
+  amount: number;
+  reference: string;
+  rail: string;
+  created_at: string;
+};
+
+type DemoAudit = {
+  id: string;
+  kind: string;
+  actor_id?: string | null;
   title: string;
   detail: string;
-  signature?: string;
+  created_at: string;
+};
+
+type DemoState = {
+  accounts: DemoAccount[];
+  orders: DemoOrder[];
+  positions: DemoPosition[];
+  deposits: DemoDeposit[];
+  audit: DemoAudit[];
 };
 
 type BrowserWallet = {
   publicKey?: { toString: () => string };
   isConnected?: boolean;
   connect: () => Promise<{ publicKey: { toString: () => string } }>;
-  disconnect?: () => Promise<void>;
   signTransaction: <T>(transaction: T) => Promise<T>;
   signAllTransactions?: <T>(transactions: T[]) => Promise<T[]>;
 };
@@ -78,804 +150,572 @@ declare global {
   }
 }
 
-const initialAudit: AuditEvent[] = [
+const fallbackMarkets: Market[] = [
   {
-    id: "evt-oracle",
-    time: "10:00:00",
-    kind: "oracle",
-    title: "Opening reference published",
-    detail: "GEF-1D opened at 1,000.00 · Mock oracle · fresh",
+    id: "wti",
+    symbol: "CL=F",
+    name: "WTI Crude Oil",
+    shortName: "WTI",
+    unit: "USD / barrel",
+    hedgeUse: "Fuel, transport and energy-input costs",
+    price: 87.5,
+    previousClose: 84.34,
+    change: 3.16,
+    changePct: 3.75,
+    updatedAt: new Date().toISOString(),
+    marketState: "LOADING",
+    points: [84.34, 85.2, 86.4, 85.9, 87.5].map((value, index) => ({
+      value,
+      time: Date.now() / 1000 - (4 - index) * 300,
+    })),
+    provider: "Loading indicative quote",
+    isFallback: true,
   },
   {
-    id: "evt-kyc",
-    time: "09:58:12",
-    kind: "compliance",
-    title: "Demo participant verified",
-    detail: "KYC-DEMO-7A91 · Nepal · retail limit applied",
+    id: "brent",
+    symbol: "BZ=F",
+    name: "Brent Crude Oil",
+    shortName: "BRENT",
+    unit: "USD / barrel",
+    hedgeUse: "Imported petroleum and global freight exposure",
+    price: 94.18,
+    previousClose: 91.01,
+    change: 3.17,
+    changePct: 3.48,
+    updatedAt: new Date().toISOString(),
+    marketState: "LOADING",
+    points: [91.01, 91.7, 92.9, 93.5, 94.18].map((value, index) => ({
+      value,
+      time: Date.now() / 1000 - (4 - index) * 300,
+    })),
+    provider: "Loading indicative quote",
+    isFallback: true,
+  },
+  {
+    id: "usdnpr",
+    symbol: "NPR=X",
+    name: "USD / NPR",
+    shortName: "USD/NPR",
+    unit: "NPR per USD",
+    hedgeUse: "Dollar invoices, imports and currency budgets",
+    price: 154.242,
+    previousClose: 153.983,
+    change: 0.259,
+    changePct: 0.17,
+    updatedAt: new Date().toISOString(),
+    marketState: "LOADING",
+    points: [153.98, 154.04, 154.11, 154.08, 154.242].map((value, index) => ({
+      value,
+      time: Date.now() / 1000 - (4 - index) * 300,
+    })),
+    provider: "Loading indicative quote",
+    isFallback: true,
   },
 ];
 
-const formatNpr = (amount: number, digits = 0) =>
+const emptyDemo: DemoState = {
+  accounts: [],
+  orders: [],
+  positions: [],
+  deposits: [],
+  audit: [],
+};
+
+const fmt = (amount: number, digits = 0) =>
   new Intl.NumberFormat("en-NP", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(amount);
 
-const shortAddress = (address: string) =>
-  `${address.slice(0, 4)}…${address.slice(-4)}`;
+const shortAddress = (address: string) => `${address.slice(0, 4)}...${address.slice(-4)}`;
 
-const eventIcon = (kind: AuditEvent["kind"]) => {
-  if (kind === "oracle") return <Activity size={15} />;
-  if (kind === "compliance") return <ShieldCheck size={15} />;
-  if (kind === "settlement") return <Scale size={15} />;
-  if (kind === "faucet") return <Droplets size={15} />;
-  if (kind === "chain") return <Link2 size={15} />;
-  return <BarChart3 size={15} />;
+const timeAgo = (timestamp: string) => {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
 };
 
+const marketIcon = (id: MarketId) =>
+  id === "usdnpr" ? <Globe2 size={19} /> : <Fuel size={19} />;
+
+const opposite = (side: Side): Side => (side === "long" ? "short" : "long");
+
+function SparkBars({ points, positive }: { points: MarketPoint[]; positive: boolean }) {
+  const values = points.length ? points.map((point) => point.value) : [0];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 0.0001);
+  return (
+    <div className={`spark-bars ${positive ? "up" : "down"}`} aria-hidden="true">
+      {values.slice(-18).map((value, index) => (
+        <span key={index} style={{ height: `${24 + ((value - min) / range) * 70}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (id: string) => void }) {
+  const [email, setEmail] = useState("asha@himalagro.demo");
+  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [error, setError] = useState("");
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const normalized = email.trim().toLowerCase();
+    const id = normalized === "asha@himalagro.demo" ? "person1" : normalized === "bikash@suryasolar.demo" ? "person2" : null;
+    if (!id || password !== DEMO_PASSWORD) {
+      setError("Use one of the demo emails and the password hedge123.");
+      return;
+    }
+    onLogin(id);
+  };
+
+  return (
+    <main className="login-shell">
+      <section className="login-story">
+        <div className="login-brand"><span className="brand-mark">N</span><span><strong>NPRX</strong><small>GLOBAL</small></span></div>
+        <div className="story-copy">
+          <span className="eyebrow">PARTICIPANT-TO-PARTICIPANT HEDGING</span>
+          <h1>Hedge the costs your business cannot control.</h1>
+          <p>Track oil and USD/NPR, post a hedge request, and match directly with another Nepali business in a fully collateralised sandbox.</p>
+        </div>
+        <div className="story-points">
+          <span><Radio size={17} /><strong>Live references</strong><small>WTI, Brent and USD/NPR</small></span>
+          <span><Users size={17} /><strong>Real counterparties</strong><small>No platform inventory</small></span>
+          <span><Link2 size={17} /><strong>Public proof</strong><small>Optional Solana Devnet receipts</small></span>
+        </div>
+      </section>
+
+      <section className="login-panel">
+        <form className="login-card" onSubmit={submit}>
+          <span className="secure-chip"><LockKeyhole size={13} /> DEMO AUTHENTICATION</span>
+          <h2>Welcome back</h2>
+          <p>Choose a prepared business persona or enter its demo credentials.</p>
+
+          <button type="button" className="persona-button" onClick={() => onLogin("person1")}>
+            <span className="avatar">AS</span><span><strong>Asha Shrestha</strong><small>Himal Agro Imports · oil importer</small></span><ArrowRight size={17} />
+          </button>
+          <button type="button" className="persona-button" onClick={() => onLogin("person2")}>
+            <span className="avatar solar">BK</span><span><strong>Bikash Karki</strong><small>Surya Solar Nepal · solar operator</small></span><ArrowRight size={17} />
+          </button>
+
+          <div className="or-divider"><span>or sign in manually</span></div>
+          <label className="login-label">Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="username" /></label>
+          <label className="login-label">Password<input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+          {error && <div className="form-error"><CircleAlert size={15} />{error}</div>}
+          <button className="primary-button login-submit" type="submit"><LogIn size={17} /> Log in to demo</button>
+          <div className="credentials"><span>Person 1: <strong>asha@himalagro.demo</strong></span><span>Person 2: <strong>bikash@suryasolar.demo</strong></span><span>Password: <strong>hedge123</strong></span></div>
+          <p className="demo-note"><ShieldCheck size={14} /> This is a demo persona selector, not production authentication. No real personal data is collected.</p>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 export default function Home() {
-  const [view, setView] = useState<View>("trade");
+  const [view, setView] = useState<View>("markets");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [demo, setDemo] = useState<DemoState>(emptyDemo);
+  const [markets, setMarkets] = useState<Market[]>(fallbackMarkets);
+  const [nrbReference, setNrbReference] = useState<NrbReference | null>(null);
+  const [activeMarketId, setActiveMarketId] = useState<MarketId>("wti");
   const [side, setSide] = useState<Side>("long");
-  const [notional, setNotional] = useState(100_000);
-  const [limitPrice, setLimitPrice] = useState(1_000);
-  const [availableBalance, setAvailableBalance] = useState(250_000);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [audit, setAudit] = useState<AuditEvent[]>(initialAudit);
+  const [notional, setNotional] = useState(10_000);
+  const [loadingState, setLoadingState] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositStep, setDepositStep] = useState<"form" | "confirm" | "success">("form");
+  const [depositAmount, setDepositAmount] = useState(100_000);
+  const [depositReference, setDepositReference] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
   const [walletProvider, setWalletProvider] = useState<BrowserWallet | null>(null);
-  const [orderMessage, setOrderMessage] = useState("");
-  const [orderError, setOrderError] = useState("");
   const [walletMessage, setWalletMessage] = useState("");
-  const [isAnchoring, setIsAnchoring] = useState(false);
-  const [faucetUsed, setFaucetUsed] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(6 * 60 * 60 + 42 * 60 + 18);
+  const [receipts, setReceipts] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setSecondsLeft((value) => Math.max(value - 1, 0)),
-      1_000,
-    );
-    return () => window.clearInterval(timer);
+  const fetchDemo = useCallback(async (quiet = false) => {
+    try {
+      const response = await fetch("/api/demo", { cache: "no-store" });
+      const payload = (await response.json()) as DemoState & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Shared demo state is unavailable");
+      setDemo(payload);
+      setError("");
+    } catch (cause) {
+      if (!quiet) setError(cause instanceof Error ? cause.message : "Could not load the shared demo");
+    } finally {
+      if (!quiet) setLoadingState(false);
+    }
   }, []);
 
-  const openPositions = positions.filter((position) => position.status === "open");
-  const lockedCollateral = openPositions.reduce(
-    (total, position) => total + position.locked,
-    0,
-  );
-  const totalBalance = availableBalance + lockedCollateral;
-  const unrealisedPnl = openPositions.reduce((total, position) => {
+  const fetchMarkets = useCallback(async () => {
+    try {
+      const response = await fetch("/api/markets", { cache: "no-store" });
+      if (!response.ok) throw new Error("Market feed unavailable");
+      const payload = (await response.json()) as { markets: Market[]; nrbReference: NrbReference | null };
+      if (payload.markets?.length) setMarkets(payload.markets);
+      setNrbReference(payload.nrbReference ?? null);
+    } catch {
+      // Clearly labelled fallbacks remain visible while the provider recovers.
+    }
+  }, []);
+
+  useEffect(() => {
+    const savedUser = window.sessionStorage.getItem("nprx-demo-user");
+    if (savedUser === "person1" || savedUser === "person2") setCurrentUserId(savedUser);
+    fetchDemo();
+    fetchMarkets();
+    const stateTimer = window.setInterval(() => fetchDemo(true), 8_000);
+    const marketTimer = window.setInterval(fetchMarkets, 30_000);
+    return () => {
+      window.clearInterval(stateTimer);
+      window.clearInterval(marketTimer);
+    };
+  }, [fetchDemo, fetchMarkets]);
+
+  const currentAccount = demo.accounts.find((account) => account.id === currentUserId);
+  const activeMarket = markets.find((market) => market.id === activeMarketId) ?? markets[0];
+  const accountById = (id: string) => demo.accounts.find((account) => account.id === id);
+  const userPositions = demo.positions.filter((position) => position.user_id === currentUserId);
+  const userOrders = demo.orders.filter((order) => order.user_id === currentUserId);
+  const lockedNotional = [...userPositions, ...userOrders].reduce((sum, item) => sum + item.notional, 0);
+
+  const positionPnl = useCallback((position: DemoPosition) => {
+    const mark = markets.find((market) => market.id === position.market_id)?.price ?? position.entry_price;
     const direction = position.side === "long" ? 1 : -1;
-    return (
-      total +
-      direction * position.notional * (MARK_PRICE / position.entry - 1)
-    );
-  }, 0);
-  const userOpenNotional = openPositions.reduce(
-    (total, position) => total + position.notional,
-    0,
-  );
-  const userLongNotional = openPositions
-    .filter((position) => position.side === "long")
-    .reduce((total, position) => total + position.notional, 0);
-  const userShortNotional = openPositions
-    .filter((position) => position.side === "short")
-    .reduce((total, position) => total + position.notional, 0);
-  const balancedOpenInterest = 6_200_000 + userOpenNotional;
-  const makerInventory = 820_000 + Math.abs(userLongNotional - userShortNotional);
-  const demoStep = positions.length === 0 ? 2 : openPositions.length > 0 ? 3 : 4;
+    return direction * position.notional * (mark / position.entry_price - 1);
+  }, [markets]);
 
-  const formattedCountdown = useMemo(() => {
-    const hours = Math.floor(secondsLeft / 3_600);
-    const minutes = Math.floor((secondsLeft % 3_600) / 60);
-    const seconds = secondsLeft % 60;
-    return [hours, minutes, seconds]
-      .map((part) => part.toString().padStart(2, "0"))
-      .join(":");
-  }, [secondsLeft]);
+  const unrealisedPnl = userPositions.reduce((sum, position) => sum + positionPnl(position), 0);
+  const equity = (currentAccount?.available_balance ?? 0) + lockedNotional + unrealisedPnl;
+  const totalLong = demo.positions.filter((position) => position.side === "long").reduce((sum, position) => sum + position.notional, 0);
+  const totalShort = demo.positions.filter((position) => position.side === "short").reduce((sum, position) => sum + position.notional, 0);
+  const matchedOpenInterest = Math.min(totalLong, totalShort);
 
-  const addAuditEvent = (event: Omit<AuditEvent, "id" | "time">) => {
-    setAudit((events) => [
-      {
-        ...event,
-        id: `evt-${Date.now()}`,
-        time: new Date().toLocaleTimeString("en-GB", { hour12: false }),
-      },
-      ...events,
-    ]);
+  const login = (id: string) => {
+    window.sessionStorage.setItem("nprx-demo-user", id);
+    setCurrentUserId(id);
+    setSide(id === "person1" ? "long" : "short");
+    setView("markets");
+    setError("");
+    if (!window.sessionStorage.getItem(`nprx-deposit-seen-${id}`)) {
+      setDepositStep("form");
+      setDepositOpen(true);
+    }
   };
 
-  const claimTestCollateral = () => {
-    if (faucetUsed) return;
-    setAvailableBalance((balance) => balance + 500_000);
-    setFaucetUsed(true);
-    setOrderMessage("500,000 tNPR issued to your simulated margin account.");
-    setOrderError("");
-    addAuditEvent({
-      kind: "faucet",
-      title: "Test collateral issued",
-      detail: "500,000 tNPR · no monetary value · demo faucet",
-    });
+  const logout = () => {
+    window.sessionStorage.removeItem("nprx-demo-user");
+    setCurrentUserId(null);
+    setDepositOpen(false);
+    setNotice("");
   };
 
-  const placeOrder = () => {
-    setOrderMessage("");
-    setOrderError("");
+  const postAction = async (payload: Record<string, unknown>, label: string) => {
+    if (!currentUserId) return null;
+    setBusy(label);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/demo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, userId: currentUserId }),
+      });
+      const result = (await response.json()) as { error?: string; state?: DemoState; reference?: string };
+      if (!response.ok) throw new Error(result.error ?? "Demo action failed");
+      if (result.state) setDemo(result.state);
+      return result;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Demo action failed");
+      return null;
+    } finally {
+      setBusy("");
+    }
+  };
 
-    if (limitPrice < LOWER_BAND || limitPrice > UPPER_BAND) {
-      setOrderError(
-        `Rejected: limit price must remain inside ${formatNpr(LOWER_BAND, 2)}–${formatNpr(UPPER_BAND, 2)}.`,
-      );
-      return;
-    }
-    if (notional < 10_000) {
-      setOrderError("Minimum demo notional is 10,000 tNPR.");
-      return;
-    }
-    if (notional > availableBalance) {
-      setOrderError("Insufficient available tNPR for 100% prefunded margin.");
-      return;
-    }
-    if (notional > 180_000) {
-      setOrderError(
-        "Only 180,000 tNPR of opposing liquidity is available. Unmatched exposure is never created.",
-      );
-      return;
-    }
-
-    const position: Position = {
-      id: `NPRX-${284 + positions.length}`,
+  const placeOrder = async () => {
+    const result = await postAction({
+      action: "place_order",
+      marketId: activeMarket.id,
       side,
       notional,
-      entry: limitPrice,
-      locked: notional,
-      status: "open",
-    };
-    setPositions((items) => [position, ...items]);
-    setAvailableBalance((balance) => balance - notional);
-    setOrderMessage(
-      `${side === "long" ? "Long" : "Short"} order matched in batch #${284 + positions.length}.`,
-    );
-    addAuditEvent({
-      kind: "order",
-      title: `${side === "long" ? "Long" : "Short"} position matched`,
-      detail: `${formatNpr(notional)} tNPR · ${formatNpr(limitPrice, 2)} · fully collateralised`,
-    });
+      postedPrice: activeMarket.price,
+    }, "place-order");
+    if (result) {
+      setNotice(`${side === "long" ? "Long" : "Short"} ${activeMarket.shortName} request posted. It is waiting for another participant.`);
+      setView("orders");
+    }
   };
 
-  const settlePosition = (positionId: string) => {
-    const position = positions.find((item) => item.id === positionId);
-    if (!position || position.status === "settled") return;
-
-    const settlementPrice = 1_030;
-    const direction = position.side === "long" ? 1 : -1;
-    const realisedPnl =
-      direction * position.notional * (settlementPrice / position.entry - 1);
-
-    setPositions((items) =>
-      items.map((item) =>
-        item.id === positionId
-          ? { ...item, status: "settled", settlementPrice, realisedPnl }
-          : item,
-      ),
-    );
-    setAvailableBalance(
-      (balance) => balance + position.locked + realisedPnl,
-    );
-    setOrderMessage(
-      `${position.id} settled at 1,030.00. ${realisedPnl >= 0 ? "+" : ""}${formatNpr(realisedPnl, 2)} tNPR realised.`,
-    );
-    addAuditEvent({
-      kind: "settlement",
-      title: `${position.id} settled atomically`,
-      detail: `Close 1,030.00 · P&L ${realisedPnl >= 0 ? "+" : ""}${formatNpr(realisedPnl, 2)} tNPR`,
-    });
+  const takeOrder = async (order: DemoOrder) => {
+    const market = markets.find((item) => item.id === order.market_id);
+    const matchPrice = market?.price ?? order.posted_price;
+    const result = await postAction({ action: "take_order", orderId: order.id, matchPrice }, `take-${order.id}`);
+    if (result) {
+      setNotice(`Matched at ${fmt(matchPrice, order.market_id === "usdnpr" ? 3 : 2)}. Your unrealised P&L starts at 0.00 tNPR.`);
+      setView("portfolio");
+    }
   };
 
-  const resetDemo = () => {
-    setAvailableBalance(250_000);
-    setPositions([]);
-    setAudit(initialAudit);
-    setFaucetUsed(false);
-    setSide("long");
-    setNotional(100_000);
-    setLimitPrice(1_000);
-    setOrderMessage("Demo reset. Start with the prefunded margin account.");
-    setOrderError("");
+  const cancelOrder = async (order: DemoOrder) => {
+    const result = await postAction({ action: "cancel_order", orderId: order.id }, `cancel-${order.id}`);
+    if (result) setNotice(`${fmt(order.notional)} tNPR margin released.`);
+  };
+
+  const submitDeposit = async () => {
+    const result = await postAction({ action: "deposit", amount: depositAmount }, "deposit");
+    if (result?.reference) {
+      setDepositReference(result.reference);
+      setDepositStep("success");
+    }
+  };
+
+  const closeDeposit = () => {
+    if (currentUserId) window.sessionStorage.setItem(`nprx-deposit-seen-${currentUserId}`, "yes");
+    setDepositOpen(false);
+    setDepositStep("form");
   };
 
   const connectWallet = async () => {
     setWalletMessage("");
-    const provider =
-      window.phantom?.solana ?? window.solana ?? window.solflare ?? null;
+    const provider = window.phantom?.solana ?? window.solana ?? window.solflare ?? null;
     if (!provider) {
-      setWalletMessage(
-        "No compatible Solana wallet was found. The simulation still works; install Phantom or Solflare to create a Devnet receipt.",
-      );
+      setWalletMessage("No compatible wallet found. Install Phantom or Solflare only if you want a Devnet receipt.");
       return;
     }
-
     try {
       const response = await provider.connect();
-      const address = response.publicKey.toString();
       setWalletProvider(provider);
-      setWalletAddress(address);
-      setWalletMessage("Wallet connected to the Devnet receipt flow.");
+      setWalletAddress(response.publicKey.toString());
+      setWalletMessage("Wallet connected for optional Solana Devnet receipts.");
     } catch {
       setWalletMessage("Wallet connection was cancelled.");
     }
   };
 
-  const anchorReceipt = async (positionId: string) => {
-    const position = positions.find((item) => item.id === positionId);
-    if (!position) return;
+  const anchorReceipt = async (position: DemoPosition) => {
     if (!walletProvider || !walletAddress) {
       setWalletMessage("Connect a Solana wallet before creating a Devnet receipt.");
       return;
     }
-
-    setIsAnchoring(true);
-    setWalletMessage("Preparing a signed Solana Devnet commitment…");
+    setBusy(`anchor-${position.id}`);
+    setWalletMessage("Preparing your Solana Devnet receipt...");
     try {
       const [{ AnchorProvider, web3 }, { Buffer }] = await Promise.all([
         import("@coral-xyz/anchor/dist/browser/index.js"),
         import("buffer"),
       ]);
       (globalThis as unknown as { Buffer: typeof Buffer }).Buffer = Buffer;
-
       const publicKey = new web3.PublicKey(walletAddress);
       const anchorWallet = {
         publicKey,
         signTransaction: walletProvider.signTransaction.bind(walletProvider),
-        signAllTransactions:
-          walletProvider.signAllTransactions?.bind(walletProvider) ??
-          (async <T,>(transactions: T[]) =>
-            Promise.all(
-              transactions.map((transaction) =>
-                walletProvider.signTransaction(transaction),
-              ),
-            )),
+        signAllTransactions: walletProvider.signAllTransactions?.bind(walletProvider) ?? (async <T,>(transactions: T[]) => Promise.all(transactions.map((transaction) => walletProvider.signTransaction(transaction)))),
       };
-      const connection = new web3.Connection(
-        web3.clusterApiUrl("devnet"),
-        "confirmed",
-      );
-      const provider = new AnchorProvider(
-        connection,
-        anchorWallet as never,
-        { commitment: "confirmed", preflightCommitment: "confirmed" },
-      );
-      const memo = Buffer.from(
-        JSON.stringify({
-          app: "NPRX Global",
-          version: "MVP-0.1",
-          action: "POSITION_COMMITMENT",
-          market: "GEF-1D",
-          position: position.id,
-          side: position.side,
-          notional_tnpr: position.notional,
-          entry: position.entry,
-          status: position.status,
-          disclaimer: "TEST ONLY · NO MONETARY VALUE",
-        }),
-        "utf8",
-      );
-      const transaction = new web3.Transaction().add(
-        new web3.TransactionInstruction({
-          programId: new web3.PublicKey(MEMO_PROGRAM_ID),
-          keys: [{ pubkey: publicKey, isSigner: true, isWritable: false }],
-          data: memo,
-        }),
-      );
+      const provider = new AnchorProvider(new web3.Connection(web3.clusterApiUrl("devnet"), "confirmed"), anchorWallet as never, { commitment: "confirmed", preflightCommitment: "confirmed" });
+      const memo = Buffer.from(JSON.stringify({
+        app: "NPRX Global",
+        action: "HEDGE_MATCH_RECEIPT",
+        match: position.match_id,
+        market: position.market_id,
+        participant: currentUserId,
+        side: position.side,
+        notional_tnpr: position.notional,
+        entry: position.entry_price,
+        disclaimer: "TEST ONLY - NO MONETARY VALUE",
+      }), "utf8");
+      const transaction = new web3.Transaction().add(new web3.TransactionInstruction({
+        programId: new web3.PublicKey(MEMO_PROGRAM_ID),
+        keys: [{ pubkey: publicKey, isSigner: true, isWritable: false }],
+        data: memo,
+      }));
       const signature = await provider.sendAndConfirm(transaction, []);
-
-      setPositions((items) =>
-        items.map((item) =>
-          item.id === positionId ? { ...item, signature } : item,
-        ),
-      );
-      addAuditEvent({
-        kind: "chain",
-        title: "Devnet receipt confirmed",
-        detail: `${position.id} · ${shortAddress(signature)} · Solana Memo Program`,
-        signature,
-      });
-      setWalletMessage("Commitment confirmed on Solana Devnet.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown wallet error";
-      setWalletMessage(
-        message.toLowerCase().includes("insufficient")
-          ? "The wallet needs a small amount of Devnet SOL to pay the network fee."
-          : "The Devnet receipt was not completed. Your simulated position is unchanged.",
-      );
+      setReceipts((items) => ({ ...items, [position.id]: signature }));
+      setWalletMessage("Receipt confirmed on Solana Devnet.");
+    } catch {
+      setWalletMessage("The receipt was not completed. The simulated hedge is unchanged.");
     } finally {
-      setIsAnchoring(false);
+      setBusy("");
     }
   };
 
+  if (!currentUserId) return <LoginScreen onLogin={login} />;
+
+  const marketCards = (
+    <section className="market-strip" aria-label="Available hedge markets">
+      {markets.map((market) => {
+        const positive = market.change >= 0;
+        return (
+          <button key={market.id} className={`market-tile ${activeMarketId === market.id ? "selected" : ""}`} onClick={() => { setActiveMarketId(market.id); setView("markets"); }}>
+            <div className="tile-top"><span className="market-icon">{marketIcon(market.id)}</span><span className={`quote-state ${market.isFallback ? "fallback" : ""}`}><i />{market.isFallback ? "Fallback" : "Feed"}</span></div>
+            <span className="ticker">{market.shortName}</span>
+            <strong className="tile-price">{fmt(market.price, market.id === "usdnpr" ? 3 : 2)}</strong>
+            <span className={`market-change ${positive ? "positive" : "negative"}`}>{positive ? "+" : ""}{fmt(market.change, 3)} · {positive ? "+" : ""}{fmt(market.changePct, 2)}%</span>
+            <SparkBars points={market.points} positive={positive} />
+            <small>{market.unit}</small>
+          </button>
+        );
+      })}
+    </section>
+  );
+
+  const orderBook = (
+    <article className="card orderbook-card">
+      <div className="card-heading">
+        <div><span className="section-kicker">SHARED ORDER BOOK</span><h2>Waiting for a counterparty</h2></div>
+        <span className="polling"><RefreshCw size={13} /> refreshes every 8s</span>
+      </div>
+      <p className="card-intro">Every open request is visible to both demo participants. A match creates equal and opposite positions—NPRX never takes a side.</p>
+      <div className="order-list">
+        {demo.orders.length === 0 && <div className="empty-state"><Users size={22} /><div><strong>No open requests</strong><p>Post a hedge request to invite the other participant.</p></div></div>}
+        {demo.orders.map((order) => {
+          const owner = accountById(order.user_id);
+          const market = markets.find((item) => item.id === order.market_id);
+          const own = order.user_id === currentUserId;
+          return (
+            <div className="order-row" key={order.id}>
+              <div className={`order-side ${order.side}`}><span>{order.side === "long" ? <TrendingUp size={18} /> : <TrendingDown size={18} />}</span><strong>{order.side.toUpperCase()}</strong></div>
+              <div className="order-main"><div><strong>{owner?.company ?? order.user_id}</strong>{own && <em>Your request</em>}</div><span>{owner?.display_name} wants {order.side} {market?.shortName} exposure</span><small><Clock3 size={12} /> {timeAgo(order.created_at)} · posted near {fmt(order.posted_price, order.market_id === "usdnpr" ? 3 : 2)}</small></div>
+              <div className="order-value"><span>NOTIONAL</span><strong>{fmt(order.notional)} <small>tNPR</small></strong></div>
+              <div className="order-action">
+                {own ? (
+                  <button className="secondary-button" disabled={busy === `cancel-${order.id}`} onClick={() => cancelOrder(order)}>{busy === `cancel-${order.id}` ? "Cancelling..." : "Cancel"}</button>
+                ) : (
+                  <button className={`take-button ${opposite(order.side)}`} disabled={busy === `take-${order.id}`} onClick={() => takeOrder(order)}>{busy === `take-${order.id}` ? "Matching..." : `Take ${opposite(order.side)}`}<ArrowRight size={15} /></button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+
   return (
     <main className="app-shell">
-      <div className="simulation-banner">
-        <span className="live-dot" />
-        Solana Devnet simulation
-        <span className="banner-divider" />
-        tNPR has no monetary value
-        <span className="banner-divider" />
-        No real deposits or foreign assets
-      </div>
-
+      <div className="simulation-banner"><span className="live-dot" /> SANDBOX DEMO <span /> tNPR has no monetary value <span /> Indicative / delayed market quotes <span /> No real deposits</div>
       <header className="topbar">
-        <button className="brand" onClick={() => setView("trade")}>
-          <span className="brand-mark">N</span>
-          <span>
-            <strong>NPRX</strong>
-            <small>GLOBAL</small>
-          </span>
-        </button>
-
+        <button className="brand" onClick={() => setView("markets")}><span className="brand-mark">N</span><span><strong>NPRX</strong><small>GLOBAL</small></span></button>
         <nav className="main-nav" aria-label="Primary navigation">
-          <button
-            className={view === "trade" ? "active" : ""}
-            onClick={() => setView("trade")}
-          >
-            Trade
-          </button>
-          <button
-            className={view === "oversight" ? "active" : ""}
-            onClick={() => setView("oversight")}
-          >
-            Oversight
-          </button>
-          <button
-            className={view === "architecture" ? "active" : ""}
-            onClick={() => setView("architecture")}
-          >
-            How it works
-          </button>
+          <button className={view === "markets" ? "active" : ""} onClick={() => setView("markets")}>Markets</button>
+          <button className={view === "orders" ? "active" : ""} onClick={() => setView("orders")}>Order book {demo.orders.length > 0 && <b>{demo.orders.length}</b>}</button>
+          <button className={view === "portfolio" ? "active" : ""} onClick={() => setView("portfolio")}>Portfolio</button>
+          <button className={view === "oversight" ? "active" : ""} onClick={() => setView("oversight")}>Oversight</button>
         </nav>
-
         <div className="header-actions">
-          <span className="network-pill">
-            <span className="network-dot" /> Devnet
-          </span>
-          <button className="wallet-button" onClick={connectWallet}>
-            <Wallet size={16} />
-            {walletAddress ? shortAddress(walletAddress) : "Connect wallet"}
-          </button>
+          <span className="feed-pill"><i /> INDICATIVE FEEDS</span>
+          <button className="fund-button" onClick={() => { setDepositStep("form"); setDepositOpen(true); }}><Plus size={14} /> Add test funds</button>
+          <div className="user-chip"><span className="avatar mini">{currentAccount?.display_name.split(" ").map((part) => part[0]).join("") ?? "D"}</span><span><strong>{currentAccount?.display_name ?? "Demo user"}</strong><small>{currentAccount?.company}</small></span><ChevronDown size={14} /></div>
+          <button className="icon-button" onClick={logout} title="Switch demo account"><LogOut size={16} /></button>
         </div>
       </header>
 
-      {walletMessage && (
-        <div className="wallet-message" role="status">
-          <span>{walletMessage}</span>
-          {!walletAddress && (
-            <a
-              href="https://faucet.solana.com/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Devnet faucet <ExternalLink size={13} />
-            </a>
-          )}
-          <button onClick={() => setWalletMessage("")} aria-label="Dismiss message">
-            <X size={15} />
-          </button>
+      {(error || notice || walletMessage) && (
+        <div className={`status-message ${error ? "error" : "success"}`} role="status">
+          {error ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}<span>{error || notice || walletMessage}</span>
+          {walletMessage && !walletAddress && <a href="https://phantom.app/" target="_blank" rel="noreferrer">Wallet info <ExternalLink size={12} /></a>}
+          <button onClick={() => { setError(""); setNotice(""); setWalletMessage(""); }} aria-label="Dismiss"><X size={15} /></button>
         </div>
       )}
 
-      {view === "trade" && (
-        <>
-          <section className="intro-row">
-            <div>
-              <div className="eyebrow">
-                <span>MARKET 01</span>
-                <span className="status-badge">OPEN</span>
-              </div>
-              <h1>Global Equity Daily Future</h1>
-              <p>
-                Take a fully collateralised long or short view on a broad global
-                equity benchmark—simulated and settled entirely in tNPR.
-              </p>
-            </div>
-            <div className="guided-demo">
-              <div className="guided-heading">
-                <PlayCircle size={17} />
-                <strong>Guided demo</strong>
-                <span>{demoStep}/4</span>
-              </div>
-              <div className="step-track">
-                {[1, 2, 3, 4].map((step) => (
-                  <span
-                    key={step}
-                    className={step <= demoStep ? "complete" : ""}
-                  />
-                ))}
-              </div>
-              <p>
-                {demoStep === 2 && "Place the prefilled 100,000 tNPR long order."}
-                {demoStep === 3 && "Settle the open position at the +3% demo close."}
-                {demoStep === 4 && "Connect a wallet and anchor the receipt on Devnet."}
-              </p>
-            </div>
-          </section>
+      <div className="workspace">
+        {loadingState && demo.accounts.length === 0 ? <div className="loading-card"><RefreshCw size={22} className="spin" /> Loading shared demo accounts...</div> : (
+          <>
+            {view === "markets" && (
+              <>
+                <section className="page-heading">
+                  <div><span className="eyebrow">LIVE HEDGE REFERENCES</span><h1>Turn volatile costs into a budget.</h1><p>Choose the exposure your business faces, then request a fully collateralised hedge from another participant.</p></div>
+                  <div className="persona-story"><span className="avatar large">{currentAccount?.display_name.split(" ").map((part) => part[0]).join("")}</span><div><small>YOUR DEMO SCENARIO</small><strong>{currentAccount?.company}</strong><p>{currentAccount?.hedge_story}</p></div></div>
+                </section>
+                {marketCards}
 
-          <section className="dashboard-grid">
-            <div className="left-column">
-              <article className="market-card card">
-                <div className="market-topline">
-                  <div>
-                    <div className="instrument-label">
-                      <span className="instrument-mark">GX</span>
-                      <div>
-                        <strong>GEF-1D</strong>
-                        <span>JUL 22 · DAILY</span>
-                      </div>
+                <section className="trade-grid">
+                  <article className="card market-detail">
+                    <div className="detail-heading"><div className="instrument-title"><span className="market-icon large">{marketIcon(activeMarket.id)}</span><div><span>{activeMarket.symbol}</span><h2>{activeMarket.name}</h2><p>{activeMarket.hedgeUse}</p></div></div><div className="big-quote"><span>INDICATIVE MARK</span><strong>{fmt(activeMarket.price, activeMarket.id === "usdnpr" ? 3 : 2)}</strong><small>{activeMarket.unit}</small></div></div>
+                    <div className="large-chart"><SparkBars points={activeMarket.points} positive={activeMarket.change >= 0} /><div className="chart-baseline" /></div>
+                    <div className="source-row"><span><Radio size={14} /> {activeMarket.provider}</span><span>Updated {timeAgo(activeMarket.updatedAt)}</span><span>State: {activeMarket.marketState}</span></div>
+                    {activeMarket.id === "usdnpr" && nrbReference && <div className="nrb-reference"><Landmark size={18} /><div><strong>NRB official daily reference · {nrbReference.date}</strong><span>Buy {fmt(nrbReference.buy, 2)} · Sell {fmt(nrbReference.sell, 2)} · Mid {fmt(nrbReference.mid, 2)}</span></div></div>}
+                    <div className="hedge-example"><BriefcaseBusiness size={18} /><div><strong>How a business uses this</strong><p>{activeMarket.id === "usdnpr" ? "An importer can go long USD/NPR to offset a more expensive dollar invoice; an exporter can take the opposing short exposure." : "A fuel-dependent importer can go long oil to offset a price increase; an energy alternative business can take the opposing short view."}</p></div></div>
+                  </article>
+
+                  <aside className="card order-ticket">
+                    <span className="section-kicker">CREATE HEDGE REQUEST</span><h2>{activeMarket.shortName} exposure</h2><p>Post at the current indicative mark. Your position only begins when another participant accepts it.</p>
+                    <div className="side-toggle"><button className={side === "long" ? "active long" : ""} onClick={() => setSide("long")}><TrendingUp size={16} /> Long / protect rise</button><button className={side === "short" ? "active short" : ""} onClick={() => setSide("short")}><TrendingDown size={16} /> Short / protect fall</button></div>
+                    <label className="field-label">Notional value <small>tNPR</small></label>
+                    <div className="amount-input"><input type="number" min="10000" max="250000" step="10000" value={notional} onChange={(event) => setNotional(Number(event.target.value))} /><span>tNPR</span></div>
+                    <div className="amount-presets">{[10_000, 25_000, 50_000, 100_000].map((amount) => <button key={amount} onClick={() => setNotional(amount)}>{fmt(amount / 1000)}K</button>)}</div>
+                    <div className="ticket-summary"><div><span>Reference mark</span><strong>{fmt(activeMarket.price, activeMarket.id === "usdnpr" ? 3 : 2)}</strong></div><div><span>Margin reserved</span><strong>{fmt(notional)} tNPR</strong></div><div><span>Platform position</span><strong className="positive">0 tNPR</strong></div><div><span>Initial P&L at match</span><strong>0.00 tNPR</strong></div></div>
+                    <button className={`primary-button submit-order ${side}`} disabled={busy === "place-order" || notional > (currentAccount?.available_balance ?? 0)} onClick={placeOrder}>{busy === "place-order" ? "Posting..." : `Post ${side} request`}<ArrowRight size={16} /></button>
+                    <p className="fine-print"><LockKeyhole size={13} /> 100% test margin is reserved. No automatic market maker or platform counterparty.</p>
+                  </aside>
+                </section>
+
+                <section className="dashboard-split">
+                  {orderBook}
+                  <article className="card account-card"><div className="card-heading"><div><span className="section-kicker">MARGIN ACCOUNT</span><h2>{fmt(equity, 2)} <small>tNPR</small></h2></div><span className="verified"><ShieldCheck size={14} /> DEMO</span></div><div className="account-breakdown"><div><span>Available</span><strong>{fmt(currentAccount?.available_balance ?? 0)}</strong></div><div><span>Locked</span><strong>{fmt(lockedNotional)}</strong></div><div><span>Unrealised P&L</span><strong className={unrealisedPnl >= 0 ? "positive" : "negative"}>{unrealisedPnl >= 0 ? "+" : ""}{fmt(unrealisedPnl, 2)}</strong></div></div><button className="secondary-button full" onClick={() => { setDepositStep("form"); setDepositOpen(true); }}><ArrowDownToLine size={15} /> Deposit via connectIPS Sandbox</button></article>
+                </section>
+              </>
+            )}
+
+            {view === "orders" && (
+              <section className="standard-view"><div className="page-heading compact"><div><span className="eyebrow">PARTICIPANT LIQUIDITY</span><h1>Shared order book</h1><p>See the request Asha posted, switch to Bikash, and accept the opposite side.</p></div><div className="principle-pill"><Users size={20} /><span><strong>Participants create 100% of open interest</strong><small>The platform never takes a position.</small></span></div></div>{marketCards}{orderBook}</section>
+            )}
+
+            {view === "portfolio" && (
+              <section className="standard-view">
+                <div className="page-heading compact"><div><span className="eyebrow">YOUR HEDGES</span><h1>Portfolio</h1><p>Every position has a named demo counterparty, the same match price, and live mark-to-market P&L.</p></div><div className="equity-hero"><small>TOTAL TEST EQUITY</small><strong>{fmt(equity, 2)} tNPR</strong><span className={unrealisedPnl >= 0 ? "positive" : "negative"}>{unrealisedPnl >= 0 ? "+" : ""}{fmt(unrealisedPnl, 2)} unrealised</span></div></div>
+                <div className="portfolio-grid">
+                  <article className="card positions-card"><div className="card-heading"><div><span className="section-kicker">OPEN POSITIONS</span><h2>{userPositions.length} active hedges</h2></div><span className="balanced-chip"><Scale size={14} /> Equal opposite sides</span></div>
+                    <div className="position-list">
+                      {userPositions.map((position) => {
+                        const market = markets.find((item) => item.id === position.market_id);
+                        const counterparty = accountById(position.counterparty_id);
+                        const pnl = positionPnl(position);
+                        const receipt = receipts[position.id];
+                        return <div className="position-row" key={position.id}>
+                          <div className={`position-direction ${position.side}`}>{position.side === "long" ? <TrendingUp size={18} /> : <TrendingDown size={18} />}</div>
+                          <div className="position-name"><strong>{market?.shortName} · {position.side.toUpperCase()}</strong><span>vs {counterparty?.company}</span><small>Match {position.match_id}</small></div>
+                          <div><span>NOTIONAL</span><strong>{fmt(position.notional)} tNPR</strong></div>
+                          <div><span>ENTRY / LIVE MARK</span><strong>{fmt(position.entry_price, position.market_id === "usdnpr" ? 3 : 2)} / {fmt(market?.price ?? position.entry_price, position.market_id === "usdnpr" ? 3 : 2)}</strong></div>
+                          <div><span>UNREALISED P&L</span><strong className={pnl >= 0 ? "positive" : "negative"}>{pnl >= 0 ? "+" : ""}{fmt(pnl, 2)} tNPR</strong></div>
+                          <div className="receipt-action">{receipt ? <a href={`https://explorer.solana.com/tx/${receipt}?cluster=devnet`} target="_blank" rel="noreferrer">View receipt <ExternalLink size={12} /></a> : <button onClick={() => anchorReceipt(position)} disabled={busy === `anchor-${position.id}`}>{busy === `anchor-${position.id}` ? "Signing..." : "Devnet receipt"}</button>}</div>
+                        </div>;
+                      })}
                     </div>
-                  </div>
-                  <div className="market-price">
-                    <span>INDICATIVE MARK</span>
-                    <strong>{formatNpr(MARK_PRICE, 2)}</strong>
-                    <em>+0.32%</em>
-                  </div>
+                  </article>
+                  <aside className="card wallet-card"><span className="wallet-art"><Wallet size={25} /></span><span className="section-kicker">OPTIONAL PUBLIC PROOF</span><h2>Anchor a match receipt</h2><p>The shared matching demo works without a wallet. Connect one only to write an optional Memo Program receipt to Solana Devnet.</p><button className="secondary-button full" onClick={connectWallet}><Wallet size={15} />{walletAddress ? shortAddress(walletAddress) : "Connect wallet"}</button><div className="scope-note"><CircleAlert size={14} /><span><strong>What is on-chain?</strong> A test-only match memo. Money, custody, price feeds and settlement are not on-chain in this MVP.</span></div></aside>
                 </div>
+              </section>
+            )}
 
-                <div className="chart-wrap" aria-label="Intraday reference price chart">
-                  <div className="chart-grid-lines" />
-                  <div className="chart-fill" />
-                  <div className="chart-line" />
-                  <span className="opening-line">
-                    <small>OPEN 1,000.00</small>
-                  </span>
-                  <span className="mark-label">1,003.20</span>
-                  <div className="chart-axis">
-                    <span>10:00</span><span>12:00</span><span>14:00</span><span>16:00</span>
-                  </div>
-                </div>
+            {view === "oversight" && (
+              <section className="standard-view">
+                <div className="page-heading compact"><div><span className="eyebrow">TRANSPARENT MARKET STRUCTURE</span><h1>Participant-only oversight</h1><p>Matched exposure is balanced by construction. Unmatched orders remain requests and never become positions.</p></div><span className="zero-exposure"><ShieldCheck size={22} /><span><small>PLATFORM EXPOSURE</small><strong>0 tNPR</strong></span></span></div>
+                <div className="metric-grid"><article><Users size={20} /><span>DEMO PARTICIPANTS</span><strong>{demo.accounts.length}</strong><small>Businesses with distinct hedge needs</small></article><article><Scale size={20} /><span>MATCHED OPEN INTEREST</span><strong>{fmt(matchedOpenInterest)}</strong><small>tNPR, counted once per matched pair</small></article><article><Activity size={20} /><span>LONG / SHORT</span><strong>{fmt(totalLong)} / {fmt(totalShort)}</strong><small>Equal participant exposure</small></article><article><Clock3 size={20} /><span>WAITING REQUESTS</span><strong>{demo.orders.length}</strong><small>Not yet part of open interest</small></article></div>
+                <div className="oversight-grid"><article className="card exposure-card"><div className="card-heading"><div><span className="section-kicker">BALANCE CHECK</span><h2>Open interest is participant-created</h2></div><span className="balanced-chip"><Check size={14} /> BALANCED</span></div><div className="exposure-figures"><span><small>PARTICIPANT LONGS</small><strong>{fmt(totalLong)} tNPR</strong></span><i>=</i><span><small>PARTICIPANT SHORTS</small><strong>{fmt(totalShort)} tNPR</strong></span></div><div className="exposure-bar"><span style={{ width: "50%" }} /><span style={{ width: "50%" }} /></div><div className="exposure-legend"><span><i className="long-color" /> Participant long</span><span><i className="short-color" /> Participant short</span><span><i className="platform-color" /> Platform inventory: zero</span></div><div className="market-exposure">{markets.map((market) => { const value = demo.positions.filter((position) => position.market_id === market.id && position.side === "long").reduce((sum, position) => sum + position.notional, 0); return <div key={market.id}><span>{market.shortName}</span><strong>{fmt(value)} tNPR</strong><em>{demo.positions.filter((position) => position.market_id === market.id).length / 2} matches</em></div>; })}</div></article>
+                <article className="card control-card"><div className="card-heading"><div><span className="section-kicker">MVP CONTROLS</span><h2>Safety rails</h2></div></div><div className="control-list"><span><LockKeyhole size={17} /><div><strong>100% prefunded</strong><small>Notional reserved before matching</small></div><em>ACTIVE</em></span><span><Users size={17} /><div><strong>No house account</strong><small>Self-matching is blocked</small></div><em>ACTIVE</em></span><span><Database size={17} /><div><strong>Shared state</strong><small>D1-backed orders and positions</small></div><em>ACTIVE</em></span><span><Radio size={17} /><div><strong>Feed labels</strong><small>Indicative/delayed status visible</small></div><em>ACTIVE</em></span></div></article>
+                <article className="card audit-card"><div className="card-heading"><div><span className="section-kicker">MARKET AUDIT</span><h2>Recent demo activity</h2></div><span className="polling"><i /> shared live state</span></div><div className="audit-list">{demo.audit.slice(0, 12).map((event) => <div className="audit-row" key={event.id}><span className="audit-icon">{event.kind === "deposit" ? <Landmark size={15} /> : event.kind === "match" ? <Scale size={15} /> : <BarChart3 size={15} />}</span><div><strong>{event.title}</strong><span>{event.detail}</span></div><em>{accountById(event.actor_id ?? "")?.company ?? "System"}</em><time>{timeAgo(event.created_at)}</time></div>)}</div></article></div>
+              </section>
+            )}
+          </>
+        )}
+      </div>
 
-                <div className="market-stats">
-                  <div>
-                    <span>Opening reference</span>
-                    <strong>1,000.00</strong>
-                  </div>
-                  <div>
-                    <span>Execution band</span>
-                    <strong>995.00–1,005.00</strong>
-                  </div>
-                  <div>
-                    <span>Opposing liquidity</span>
-                    <strong>180,000 tNPR</strong>
-                  </div>
-                  <div>
-                    <span>Settlement in</span>
-                    <strong className="mono"><Clock3 size={14} /> {formattedCountdown}</strong>
-                  </div>
-                </div>
-              </article>
+      <footer><div className="footer-brand"><span className="brand-mark small">N</span><span><strong>NPRX Global</strong><small>BUSINESS HEDGING SANDBOX</small></span></div><p>Demo only. No real money, deposits, custody, securities, derivatives, settlement, or investment service. Quotes may be delayed and are not official settlement prices.</p><span>Solana Devnet · v0.2</span></footer>
 
-              <article className="positions-card card">
-                <div className="card-heading">
-                  <div>
-                    <span className="section-kicker">YOUR BOOK</span>
-                    <h2>Positions</h2>
-                  </div>
-                  <button className="quiet-button" onClick={resetDemo}>
-                    <RotateCcw size={14} /> Reset demo
-                  </button>
-                </div>
-
-                {positions.length === 0 ? (
-                  <div className="empty-state">
-                    <span><BarChart3 size={22} /></span>
-                    <div>
-                      <strong>No positions yet</strong>
-                      <p>Your matched orders will appear here with settlement controls.</p>
-                    </div>
-                    <ChevronRight size={18} />
-                  </div>
-                ) : (
-                  <div className="position-list">
-                    {positions.map((position) => {
-                      const direction = position.side === "long" ? 1 : -1;
-                      const currentPnl =
-                        position.status === "settled"
-                          ? position.realisedPnl ?? 0
-                          : direction *
-                            position.notional *
-                            (MARK_PRICE / position.entry - 1);
-                      return (
-                        <div className="position-row" key={position.id}>
-                          <div className={`side-icon ${position.side}`}>
-                            {position.side === "long" ? (
-                              <TrendingUp size={18} />
-                            ) : (
-                              <TrendingDown size={18} />
-                            )}
-                          </div>
-                          <div className="position-name">
-                            <strong>{position.id}</strong>
-                            <span>{position.side.toUpperCase()} · GEF-1D</span>
-                          </div>
-                          <div>
-                            <span>Notional</span>
-                            <strong>{formatNpr(position.notional)} tNPR</strong>
-                          </div>
-                          <div>
-                            <span>{position.status === "settled" ? "Realised" : "Unrealised"}</span>
-                            <strong className={currentPnl >= 0 ? "positive" : "negative"}>
-                              {currentPnl >= 0 ? "+" : ""}{formatNpr(currentPnl, 2)}
-                            </strong>
-                          </div>
-                          <div className="position-actions">
-                            {position.status === "open" ? (
-                              <button
-                                className="settle-button"
-                                onClick={() => settlePosition(position.id)}
-                              >
-                                Settle at +3%
-                              </button>
-                            ) : (
-                              <span className="settled-pill"><Check size={13} /> Settled</span>
-                            )}
-                            {position.signature ? (
-                              <a
-                                className="receipt-link"
-                                href={`https://explorer.solana.com/tx/${position.signature}?cluster=devnet`}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                View receipt <ExternalLink size={13} />
-                              </a>
-                            ) : (
-                              <button
-                                className="receipt-link"
-                                onClick={() => anchorReceipt(position.id)}
-                                disabled={isAnchoring}
-                              >
-                                <Link2 size={13} />
-                                {isAnchoring ? "Anchoring…" : "Anchor receipt"}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </article>
-            </div>
-
-            <aside className="right-column">
-              <article className="balance-card card">
-                <div className="balance-heading">
-                  <div>
-                    <span>SIMULATED MARGIN</span>
-                    <strong>{formatNpr(totalBalance, 2)} <small>tNPR</small></strong>
-                  </div>
-                  <span className="verified-chip"><ShieldCheck size={14} /> Verified demo</span>
-                </div>
-                <div className="balance-breakdown">
-                  <div><span>Available</span><strong>{formatNpr(availableBalance)}</strong></div>
-                  <div><span>Locked</span><strong>{formatNpr(lockedCollateral)}</strong></div>
-                  <div><span>Unrealised P&L</span><strong className={unrealisedPnl >= 0 ? "positive" : "negative"}>{unrealisedPnl >= 0 ? "+" : ""}{formatNpr(unrealisedPnl, 2)}</strong></div>
-                </div>
-                <button
-                  className="faucet-button"
-                  onClick={claimTestCollateral}
-                  disabled={faucetUsed}
-                >
-                  <Droplets size={15} />
-                  {faucetUsed ? "Test allowance claimed" : "Claim 500,000 test tNPR"}
-                </button>
-              </article>
-
-              <article className="order-card card">
-                <div className="card-heading compact">
-                  <div>
-                    <span className="section-kicker">BATCH #284</span>
-                    <h2>Order ticket</h2>
-                  </div>
-                  <span className="auction-time"><Clock3 size={13} /> 02:18</span>
-                </div>
-
-                <div className="side-toggle">
-                  <button
-                    className={side === "long" ? "active long" : ""}
-                    onClick={() => setSide("long")}
-                  >
-                    <TrendingUp size={16} /> Long
-                  </button>
-                  <button
-                    className={side === "short" ? "active short" : ""}
-                    onClick={() => setSide("short")}
-                  >
-                    <TrendingDown size={16} /> Short
-                  </button>
-                </div>
-
-                <label className="field-label" htmlFor="notional">
-                  <span>Notional</span><small>tNPR</small>
-                </label>
-                <div className="amount-input">
-                  <input
-                    id="notional"
-                    type="number"
-                    min={10_000}
-                    step={10_000}
-                    value={notional}
-                    onChange={(event) => setNotional(Number(event.target.value))}
-                  />
-                  <span>tNPR</span>
-                </div>
-                <div className="amount-presets">
-                  {[50_000, 100_000, 180_000].map((amount) => (
-                    <button key={amount} onClick={() => setNotional(amount)}>
-                      {amount / 1_000}k
-                    </button>
-                  ))}
-                </div>
-
-                <label className="field-label" htmlFor="limit-price">
-                  <span>Limit price</span><small>band 995–1,005</small>
-                </label>
-                <div className="amount-input">
-                  <input
-                    id="limit-price"
-                    type="number"
-                    min={LOWER_BAND}
-                    max={UPPER_BAND}
-                    step={0.1}
-                    value={limitPrice}
-                    onChange={(event) => setLimitPrice(Number(event.target.value))}
-                  />
-                  <span>INDEX</span>
-                </div>
-
-                <div className="order-summary">
-                  <div><span>Required margin</span><strong>{formatNpr(notional)} tNPR</strong></div>
-                  <div><span>Leverage</span><strong>1.00×</strong></div>
-                  <div><span>Estimated fee</span><strong>{formatNpr(notional * 0.0015)} tNPR</strong></div>
-                </div>
-
-                {orderError && <div className="inline-alert error"><TriangleAlert size={15} />{orderError}</div>}
-                {orderMessage && <div className="inline-alert success"><CheckCircle2 size={15} />{orderMessage}</div>}
-
-                <button className={`submit-order ${side}`} onClick={placeOrder}>
-                  Place {side} order <ArrowUpRight size={17} />
-                </button>
-                <p className="order-note">
-                  Orders are matched in five-minute batches. No match means no position.
-                </p>
-              </article>
-            </aside>
-          </section>
-
-          <section className="safety-strip">
-            <div><ShieldCheck size={19} /><span><strong>Verified access</strong>KYC hash only, no identity data on-chain</span></div>
-            <div><Scale size={19} /><span><strong>Balanced exposure</strong>Every long has a funded short</span></div>
-            <div><Gauge size={19} /><span><strong>Hard risk limits</strong>1× leverage and ±0.5% execution band</span></div>
-            <div><Database size={19} /><span><strong>Auditable receipts</strong>Optional commitments on Solana Devnet</span></div>
-          </section>
-        </>
+      {depositOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Fund sandbox account">
+          <div className="deposit-modal">
+            <button className="modal-close" onClick={closeDeposit} aria-label="Close"><X size={18} /></button>
+            {depositStep === "form" && <><span className="payment-logo"><Landmark size={20} /></span><span className="section-kicker">STEP 1 OF 2</span><h2>Fund your sandbox account</h2><p>Choose an amount to simulate through connectIPS. NPRX will credit the same amount in test-only tNPR.</p><label className="field-label">Deposit amount <small>NPR</small></label><div className="amount-input modal-amount"><input type="number" min="10000" max="1000000" step="10000" value={depositAmount} onChange={(event) => setDepositAmount(Number(event.target.value))} /><span>NPR</span></div><div className="amount-presets">{[50_000, 100_000, 250_000, 500_000].map((amount) => <button key={amount} onClick={() => setDepositAmount(amount)}>{fmt(amount / 1000)}K</button>)}</div><div className="bank-account"><span className="bank-symbol">DB</span><span><strong>Demo Bank account</strong><small>Primary account ···· {currentUserId === "person1" ? "2408" : "7712"}</small></span><CheckCircle2 size={17} /></div><button className="primary-button full" onClick={() => setDepositStep("confirm")} disabled={depositAmount < 10_000 || depositAmount > 1_000_000}>Continue with connectIPS Sandbox <ArrowRight size={16} /></button><button className="text-button" onClick={closeDeposit}>Use existing demo balance</button></>}
+            {depositStep === "confirm" && <><span className="connectips-wordmark">connect<span>IPS</span></span><span className="sandbox-label">SANDBOX SIMULATION</span><h2>Approve demo payment</h2><p>This screen resembles a payment hand-off for the product story. It will not contact connectIPS, a bank, or any external payment system.</p><div className="payment-summary"><div><span>Merchant</span><strong>NPRX Global Sandbox</strong></div><div><span>From</span><strong>Demo Bank ···· {currentUserId === "person1" ? "2408" : "7712"}</strong></div><div><span>Amount</span><strong>NPR {fmt(depositAmount, 2)}</strong></div><div><span>You receive</span><strong>{fmt(depositAmount, 2)} tNPR</strong></div></div><div className="simulation-warning"><CircleAlert size={18} /><span><strong>Simulation only</strong>No real credentials, bank account or money will be used.</span></div><button className="primary-button full" disabled={busy === "deposit"} onClick={submitDeposit}>{busy === "deposit" ? "Crediting test funds..." : "Approve sandbox payment"}</button><button className="text-button" onClick={() => setDepositStep("form")}>Back</button></>}
+            {depositStep === "success" && <div className="deposit-success"><span><Check size={32} /></span><small>PAYMENT SIMULATED</small><h2>{fmt(depositAmount)} tNPR credited</h2><p>Your test account received a 1:1 credit. No real funds moved.</p><div className="reference-box"><span>Sandbox reference</span><strong>{depositReference}</strong></div><button className="primary-button full" onClick={closeDeposit}>Enter dashboard <ArrowRight size={16} /></button></div>}
+          </div>
+        </div>
       )}
-
-      {view === "oversight" && (
-        <section className="oversight-view">
-          <div className="oversight-hero">
-            <div>
-              <div className="eyebrow"><span>SUPERVISORY CONSOLE</span><span className="status-badge">LIVE DEMO</span></div>
-              <h1>Market oversight in real time.</h1>
-              <p>One shared view of collateral, exposure, pricing, and every administrative action.</p>
-            </div>
-            <div className="oversight-actions">
-              <span><Eye size={15} /> Read-only regulator view</span>
-              <button onClick={() => setView("trade")}>Return to market</button>
-            </div>
-          </div>
-
-          <div className="metric-grid">
-            <article className="metric-card"><span>Total test supply</span><strong>10.75m</strong><small>tNPR · faucet controlled</small><Droplets size={18} /></article>
-            <article className="metric-card"><span>Matched open interest</span><strong>{formatNpr(balancedOpenInterest / 1_000_000, 2)}m</strong><small>long = short</small><Scale size={18} /></article>
-            <article className="metric-card"><span>Collateral coverage</span><strong>100.0%</strong><small>fully prefunded</small><ShieldCheck size={18} /></article>
-            <article className="metric-card"><span>Oracle status</span><strong className="healthy">Healthy</strong><small>age 8s · mock source</small><Activity size={18} /></article>
-          </div>
-
-          <div className="oversight-grid">
-            <article className="exposure-panel card">
-              <div className="card-heading">
-                <div><span className="section-kicker">SYSTEM EXPOSURE</span><h2>Balanced by construction</h2></div>
-                <span className="verified-chip"><CheckCircle2 size={14} /> Invariant holds</span>
-              </div>
-              <div className="exposure-total">
-                <div><span>Long open interest</span><strong>{formatNpr(balancedOpenInterest)} tNPR</strong></div>
-                <div className="equals-mark">=</div>
-                <div className="align-right"><span>Short open interest</span><strong>{formatNpr(balancedOpenInterest)} tNPR</strong></div>
-              </div>
-              <div className="exposure-bar"><span style={{ width: "50%" }} /><span style={{ width: "50%" }} /></div>
-              <div className="exposure-legend"><span><i className="long-color" />Customer longs 81.3%</span><span><i className="short-color" />Customer shorts 12.2%</span><span><i className="maker-color" />Market maker 6.5%</span></div>
-              <div className="risk-table">
-                <div><span>Market-maker inventory</span><strong>{formatNpr(makerInventory)} / 1,500,000 tNPR</strong><em>{Math.round((makerInventory / 1_500_000) * 100)}%</em></div>
-                <div><span>Market open-interest cap</span><strong>{formatNpr(balancedOpenInterest)} / 10,000,000 tNPR</strong><em>{Math.round((balancedOpenInterest / 10_000_000) * 100)}%</em></div>
-                <div><span>Largest participant</span><strong>620,000 / 750,000 tNPR</strong><em>83%</em></div>
-              </div>
-            </article>
-
-            <article className="controls-panel card">
-              <div className="card-heading"><div><span className="section-kicker">CONTROL STATUS</span><h2>Safeguards</h2></div></div>
-              <div className="control-list">
-                <div><span className="control-icon"><LockKeyhole size={16} /></span><span><strong>Compliance gating</strong><small>Verified wallets only</small></span><em>ON</em></div>
-                <div><span className="control-icon"><Gauge size={16} /></span><span><strong>Price band</strong><small>±0.50% from reference</small></span><em>ON</em></div>
-                <div><span className="control-icon"><Activity size={16} /></span><span><strong>Oracle staleness</strong><small>Reject after 60 seconds</small></span><em>ON</em></div>
-                <div><span className="control-icon"><Scale size={16} /></span><span><strong>Exposure invariant</strong><small>Matched positions only</small></span><em>ON</em></div>
-              </div>
-              <button className="pause-button" disabled><TriangleAlert size={15} /> Emergency pause · regulator multisig</button>
-            </article>
-
-            <article className="audit-panel card">
-              <div className="card-heading">
-                <div><span className="section-kicker">AUDIT STREAM</span><h2>Latest activity</h2></div>
-                <span className="audit-live"><span /> streaming</span>
-              </div>
-              <div className="audit-list">
-                {audit.map((event) => (
-                  <div className="audit-row" key={event.id}>
-                    <span className={`audit-icon ${event.kind}`}>{eventIcon(event.kind)}</span>
-                    <div><strong>{event.title}</strong><span>{event.detail}</span></div>
-                    <time>{event.time}</time>
-                    {event.signature && <a href={`https://explorer.solana.com/tx/${event.signature}?cluster=devnet`} target="_blank" rel="noreferrer" aria-label="Open receipt in Solana Explorer"><ExternalLink size={14} /></a>}
-                  </div>
-                ))}
-              </div>
-            </article>
-          </div>
-        </section>
-      )}
-
-      {view === "architecture" && (
-        <section className="architecture-view">
-          <div className="architecture-hero">
-            <span className="section-kicker">WHY NPRX GLOBAL</span>
-            <h1>Global reference. Local risk. Public proof.</h1>
-            <p>
-              A regulatory-first market design that gives approved Nepali participants a
-              transparent way to simulate global benchmark exposure without receiving foreign
-              currency or owning a foreign security.
-            </p>
-          </div>
-
-          <div className="flow-card card">
-            <div className="flow-node"><span><ShieldCheck size={21} /></span><strong>1. Verify</strong><small>Signed compliance attestation; no personal data on-chain</small></div>
-            <ChevronRight size={20} />
-            <div className="flow-node"><span><CircleDollarSign size={21} /></span><strong>2. Prefund</strong><small>Test tNPR in a closed-loop simulated margin account</small></div>
-            <ChevronRight size={20} />
-            <div className="flow-node"><span><Scale size={21} /></span><strong>3. Match</strong><small>Five-minute batch auction; long exposure equals short</small></div>
-            <ChevronRight size={20} />
-            <div className="flow-node"><span><Zap size={21} /></span><strong>4. Settle</strong><small>Deterministic tNPR P&L with optional Devnet receipt</small></div>
-          </div>
-
-          <div className="principle-grid">
-            <article><span>01</span><h2>No hidden counterparty</h2><p>Orders execute only when an opposing participant or capped market maker can fund the other side.</p></article>
-            <article><span>02</span><h2>No private currency claim</h2><p>tNPR is a non-redeemable test unit. A regulated pilot would prefer internal margin balances.</p></article>
-            <article><span>03</span><h2>No black-box pricing</h2><p>The external reference sets the mark. A hard execution band and daily expiry limit local distortion.</p></article>
-          </div>
-
-          <div className="scope-panel">
-            <div>
-              <span className="section-kicker">WHAT THIS MVP PROVES</span>
-              <h2>A credible technical and economic demonstration.</h2>
-            </div>
-            <div className="scope-columns">
-              <div><strong><CheckCircle2 size={17} />Included now</strong><ul><li>One daily quanto-style market</li><li>Prefunded test collateral</li><li>Batch matching and position limits</li><li>Deterministic settlement</li><li>Regulator audit dashboard</li><li>Solana Devnet commitments</li></ul></div>
-              <div className="future"><strong><Clock3 size={17} />Requires a regulated pilot</strong><ul><li>Real NPR or bank integrations</li><li>Production KYC operations</li><li>Licensed benchmark data</li><li>Live market-making</li><li>Withdrawals or redemption</li><li>Offshore risk hedging</li></ul></div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <footer>
-        <div className="footer-brand"><span className="brand-mark small">N</span><span><strong>NPRX Global</strong><small>Infrastructure for transparent local markets</small></span></div>
-        <p>Technical simulation only. Not an offer, exchange, investment product, or legal opinion.</p>
-        <span>Built on Solana Devnet · MVP 0.1</span>
-      </footer>
     </main>
   );
 }

@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
-const title = "NPRX Global — Global exposure, locally simulated";
+const title = "NPRX Global — Business hedging, matched locally";
 const description =
-  "A Solana Devnet demonstration of fully collateralised, locally settled daily futures with real-time regulatory oversight.";
+  "A Solana Devnet sandbox where Nepali businesses can track oil and USD/NPR, fund test accounts, and match fully collateralised hedges with one another.";
 
 export async function generateMetadata(): Promise<Metadata> {
   const incomingHeaders = await headers();
@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "NPRX Global — Global reference. Local risk. Public proof." }],
+      images: [{ url: `${origin}/og.png`, width: 1200, height: 630, alt: "NPRX Global — live business hedging sandbox" }],
     },
     twitter: {
       card: "summary_large_image",
@@ -31,14 +31,6 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <html lang="en"><body>{children}</body></html>;
 }
